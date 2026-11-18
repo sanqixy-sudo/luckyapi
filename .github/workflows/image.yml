@@ -1,0 +1,87 @@
+name: LuckyAPI CI and image
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - run: npm ci --no-audit --no-fund
+      - run: npm run check
+      - run: npm test
+      - run: npm run build
+
+  publish:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify release version
+        run: |
+          set -euo pipefail
+          version="$(jq -er '.version | strings' package.json)"
+          if [[ "$GITHUB_REF_NAME" != "v$version" || ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+            echo "Release tag must be v followed by the app version from package.json."
+            exit 1
+          fi
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}:$GITHUB_REF_NAME" >> "$GITHUB_ENV"
+          echo "REVISION=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Build image and verify the health endpoint
+        run: |
+          set -euo pipefail
+          docker build \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$REVISION" \
+            --label "org.opencontainers.image.version=$GITHUB_REF_NAME" \
+            --tag "$IMAGE" .
+          container="$(docker run --detach --publish 127.0.0.1::3000 \
+            --env "ADMIN_PASSWORD=$(openssl rand -hex 24)" "$IMAGE")"
+          trap 'docker logs "$container"; docker rm -f "$container" >/dev/null' EXIT
+          address="$(docker port "$container" 3000/tcp)"
+          for ((attempt=1; attempt<=45; attempt++)); do
+            if [[ "$(docker inspect --format '{{.State.Running}}' "$container")" != true ]]; then
+              break
+            fi
+            if curl --fail --silent --max-time 5 "http://$address/" > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Container did not become ready."
+          exit 1
+      - name: Publish and pull the versioned image
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          trap 'docker logout ghcr.io >/dev/null' EXIT
+          docker push "$IMAGE"
+          docker image rm "$IMAGE"
+          docker pull "$IMAGE"
+          revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE")"
+          test "$revision" = "$REVISION"
+          printf 'Published %s\n\n' "$IMAGE" >> "$GITHUB_STEP_SUMMARY"
+          docker image inspect --format '{{join .RepoDigests "\n"}}' "$IMAGE" >> "$GITHUB_STEP_SUMMARY"
