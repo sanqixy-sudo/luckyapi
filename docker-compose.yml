@@ -1,7 +1,7 @@
 services:
   app:
     build: .
-    image: lucky-api:latest
+    image: ${LUCKYAPI_IMAGE:-lucky-api:latest}
     container_name: luckydraw
     restart: unless-stopped
     ports:

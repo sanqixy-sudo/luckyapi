@@ -98,6 +98,10 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
+也可设置 `.env` 中的 `LUCKYAPI_IMAGE=ghcr.io/sanqixy-sudo/luckyapi:v1.0.1`，然后用 `docker compose pull app` 和 `docker compose up -d --no-build app` 部署成品镜像。GHCR 包的访问范围取决于包设置。
+
+版本发布使用与 `package.json` 一致的 `vX.Y.Z` Git 标签。GitHub Actions 在运行项目检查、构建镜像并验证服务启动后发布该版本，随后从 GHCR 回拉校验。
+
 ### 3. 访问服务
 
 - 前台：`http://localhost:3000`
@@ -123,7 +127,7 @@ SQLite 数据保存在 Docker 卷 `luckydraw-data` 中。生产环境请配置 H
 ## 本地开发
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 

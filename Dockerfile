@@ -1,4 +1,4 @@
-FROM node:20-slim AS builder
+FROM node:24-bookworm-slim AS builder
 
 WORKDIR /app
 
@@ -9,18 +9,13 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json ./
-RUN corepack enable \
-    && corepack prepare pnpm@10.15.1 --activate \
-    && pnpm config set dangerously-allow-all-builds true \
-    && pnpm import \
-    && pnpm install --frozen-lockfile
+RUN npm ci --no-audit --no-fund
 
 COPY . .
-RUN pnpm run build \
-    && pnpm prune --prod \
-    && pnpm store prune
+RUN npm run build \
+    && npm prune --omit=dev --ignore-scripts --no-audit --no-fund
 
-FROM node:20-slim AS runtime
+FROM node:24-bookworm-slim AS runtime
 
 WORKDIR /app
 
